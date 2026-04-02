@@ -15,25 +15,23 @@ export function buildSankeyData(
   // Source: Income node
   nodes.push({ id: 'income', label: 'Income', color: '#10b981' });
 
-  // Spending categories
+  // Spending categories — always use actual values only to preserve flow conservation
+  let totalAllocated = 0;
+
   for (const cat of categories) {
     const actual = month.spending[cat.id] || 0;
-    if (actual <= 0 && !isHistorical) {
-      // In current/future month, still show if target > 0
-      if (cat.targetAmount <= 0) continue;
-    }
-    const amount = isHistorical ? actual : (actual > 0 ? actual : cat.targetAmount);
-    if (amount <= 0) continue;
+    if (actual <= 0) continue;
 
-    const isOver = isHistorical && actual > cat.targetAmount && cat.targetAmount > 0;
+    const isOver = isHistorical && cat.targetAmount > 0 && actual > cat.targetAmount;
     nodes.push({ id: `cat_${cat.id}`, label: cat.name, color: cat.color });
     links.push({
       source: 'income',
       target: `cat_${cat.id}`,
-      value: amount,
+      value: actual,
       color: cat.color,
       isOverBudget: isOver,
     });
+    totalAllocated += actual;
   }
 
   // Savings buckets
@@ -48,22 +46,11 @@ export function buildSankeyData(
       value: contribution,
       color: bucket.color,
     });
+    totalAllocated += contribution;
   }
 
-  // Remaining / unallocated
-  const totalSpent = categories.reduce((sum, cat) => {
-    const val = isHistorical
-      ? (month.spending[cat.id] || 0)
-      : (month.spending[cat.id] || cat.targetAmount);
-    return sum + (val > 0 ? val : 0);
-  }, 0);
-
-  const totalSavings = savingsBuckets.reduce(
-    (sum, b) => sum + (month.savingsContributions[b.id] || 0),
-    0
-  );
-
-  const remaining = income - totalSpent - totalSavings;
+  // Remaining — always non-negative since we only use actuals
+  const remaining = income - totalAllocated;
   if (remaining > 0) {
     nodes.push({ id: 'remaining', label: 'Remaining', color: '#475569' });
     links.push({
