@@ -23,17 +23,17 @@ export default function SankeyDiagram({ data, width = 800, height = 400 }: Props
   const graph = useMemo((): SGraph | null => {
     if (data.nodes.length === 0) return null;
 
-    const nodeMap = new Map(data.nodes.map((n, i) => [n.id, i]));
+    const nodeIds = new Set(data.nodes.map((n) => n.id));
     const filteredLinks = data.links.filter(
-      (l) => nodeMap.has(l.source) && nodeMap.has(l.target) && l.value > 0
+      (l) => nodeIds.has(l.source) && nodeIds.has(l.target) && l.value > 0
     );
 
     if (filteredLinks.length === 0) return null;
 
     const sankeyNodes: NodeExtra[] = data.nodes.map((n) => ({ ...n }));
     const sankeyLinks = filteredLinks.map((l) => ({
-      source: nodeMap.get(l.source)!,
-      target: nodeMap.get(l.target)!,
+      source: l.source,
+      target: l.target,
       value: l.value,
       color: l.color,
       isOverBudget: l.isOverBudget,
@@ -46,7 +46,12 @@ export default function SankeyDiagram({ data, width = 800, height = 400 }: Props
       .nodePadding(16)
       .extent([[40, 20], [width - 160, height - 20]]);
 
-    return layout({ nodes: sankeyNodes, links: sankeyLinks } as SGraph);
+    try {
+      return layout({ nodes: sankeyNodes, links: sankeyLinks } as SGraph);
+    } catch (e) {
+      console.error('Sankey layout error:', e);
+      return null;
+    }
   }, [data, width, height]);
 
   useEffect(() => {
