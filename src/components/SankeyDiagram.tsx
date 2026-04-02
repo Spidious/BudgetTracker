@@ -23,31 +23,32 @@ export default function SankeyDiagram({ data, width = 800, height = 400 }: Props
   const graph = useMemo((): SGraph | null => {
     if (data.nodes.length === 0) return null;
 
-    const nodeIds = new Set(data.nodes.map((n) => n.id));
+    const nodeIndexMap = new Map(data.nodes.map((n, i) => [n.id, i]));
     const filteredLinks = data.links.filter(
-      (l) => nodeIds.has(l.source) && nodeIds.has(l.target) && l.value > 0
+      (l) => nodeIndexMap.has(l.source) && nodeIndexMap.has(l.target) && l.value > 0
     );
 
     if (filteredLinks.length === 0) return null;
 
+    // Fresh copies every render — d3-sankey mutates these objects in place
     const sankeyNodes: NodeExtra[] = data.nodes.map((n) => ({ ...n }));
     const sankeyLinks = filteredLinks.map((l) => ({
-      source: l.source,
-      target: l.target,
+      source: nodeIndexMap.get(l.source)!, // numeric index — matches d3-sankey default nodeId
+      target: nodeIndexMap.get(l.target)!,
       value: l.value,
       color: l.color,
       isOverBudget: l.isOverBudget,
     }));
 
     const layout = sankey<NodeExtra, LinkExtra>()
-      .nodeId((d) => d.id)
+      // No .nodeId() — use default (d) => d.index, so links must be numeric indices
       .nodeAlign(sankeyLeft)
       .nodeWidth(20)
       .nodePadding(16)
       .extent([[40, 20], [width - 160, height - 20]]);
 
     try {
-      return layout({ nodes: sankeyNodes, links: sankeyLinks } as SGraph);
+      return layout({ nodes: sankeyNodes, links: sankeyLinks } as unknown as SGraph);
     } catch (e) {
       console.error('Sankey layout error:', e);
       return null;
