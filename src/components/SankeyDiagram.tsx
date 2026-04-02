@@ -1,8 +1,8 @@
-import { useEffect, useRef, useMemo } from 'react';
+import { useEffect, useRef } from 'react';
 import * as d3 from 'd3';
 import { sankey, sankeyLinkHorizontal, sankeyLeft } from 'd3-sankey';
+import type { SankeyGraph, SankeyNode, SankeyLink } from 'd3-sankey';
 import type { SankeyData } from '../types';
-import type { SankeyGraph, SankeyNode as D3SankeyNode, SankeyLink as D3SankeyLink } from 'd3-sankey';
 
 interface Props {
   data: SankeyData;
@@ -10,71 +10,63 @@ interface Props {
   height?: number;
 }
 
-type NodeExtra = { id: string; label: string; color: string; value?: number };
-type LinkExtra = { color?: string; isOverBudget?: boolean };
-
-type SNode = D3SankeyNode<NodeExtra, LinkExtra>;
-type SLink = D3SankeyLink<NodeExtra, LinkExtra>;
-type SGraph = SankeyGraph<NodeExtra, LinkExtra>;
+type NExtra = { id: string; label: string; color: string };
+type LExtra = { color?: string; isOverBudget?: boolean };
+type SNode = SankeyNode<NExtra, LExtra>;
+type SLink = SankeyLink<NExtra, LExtra>;
+type SGraph = SankeyGraph<NExtra, LExtra>;
 
 export default function SankeyDiagram({ data, width = 800, height = 400 }: Props) {
   const svgRef = useRef<SVGSVGElement>(null);
-
-  const graph = useMemo((): SGraph | null => {
-    if (data.nodes.length === 0) return null;
-
-    const nodeIndexMap = new Map(data.nodes.map((n, i) => [n.id, i]));
-    const filteredLinks = data.links.filter(
-      (l) => nodeIndexMap.has(l.source) && nodeIndexMap.has(l.target) && l.value > 0
-    );
-
-    if (filteredLinks.length === 0) return null;
-
-    // Fresh copies every render — d3-sankey mutates these objects in place
-    const sankeyNodes: NodeExtra[] = data.nodes.map((n) => ({ ...n }));
-    const sankeyLinks = filteredLinks.map((l) => ({
-      source: nodeIndexMap.get(l.source)!, // numeric index — matches d3-sankey default nodeId
-      target: nodeIndexMap.get(l.target)!,
-      value: l.value,
-      color: l.color,
-      isOverBudget: l.isOverBudget,
-    }));
-
-    const layout = sankey<NodeExtra, LinkExtra>()
-      // No .nodeId() — use default (d) => d.index, so links must be numeric indices
-      .nodeAlign(sankeyLeft)
-      .nodeWidth(20)
-      .nodePadding(16)
-      .extent([[40, 20], [width - 160, height - 20]]);
-
-    try {
-      return layout({ nodes: sankeyNodes, links: sankeyLinks } as unknown as SGraph);
-    } catch (e) {
-      console.error('Sankey layout error:', e);
-      return null;
-    }
-  }, [data, width, height]);
+  const hasData = data.nodes.length > 0 && data.links.length > 0;
 
   useEffect(() => {
     if (!svgRef.current) return;
     const svg = d3.select(svgRef.current);
     svg.selectAll('*').remove();
+    if (!hasData) return;
 
-    if (!graph) return;
+    // Build fresh copies every effect — d3-sankey mutates objects in place
+    const nodeIndexMap = new Map(data.nodes.map((n, i) => [n.id, i]));
+    const validLinks = data.links.filter(
+      (l) => nodeIndexMap.has(l.source) && nodeIndexMap.has(l.target) && l.value > 0
+    );
+    if (validLinks.length === 0) return;
+
+    const sankeyNodes: NExtra[] = data.nodes.map((n) => ({ ...n }));
+    const sankeyLinks: Array<{ source: number; target: number; value: number; color?: string; isOverBudget?: boolean }> =
+      validLinks.map((l) => ({
+        source: nodeIndexMap.get(l.source)!,
+        target: nodeIndexMap.get(l.target)!,
+        value: l.value,
+        color: l.color,
+        isOverBudget: l.isOverBudget ?? false,
+      }));
+
+    let graph: SGraph;
+    try {
+      const layout = sankey<NExtra, LExtra>()
+        .nodeAlign(sankeyLeft)
+        .nodeWidth(20)
+        .nodePadding(16)
+        .extent([[40, 20], [width - 160, height - 20]]);
+      graph = layout({ nodes: sankeyNodes, links: sankeyLinks } as unknown as SGraph);
+    } catch (e) {
+      console.error('Sankey layout error:', e);
+      return;
+    }
 
     const defs = svg.append('defs');
-
-    // Gradient for each link
     graph.links.forEach((link: SLink, i: number) => {
+      const src = link.source as SNode;
+      const tgt = link.target as SNode;
       const grad = defs.append('linearGradient')
-        .attr('id', `link-grad-${i}`)
+        .attr('id', `lg-${i}`)
         .attr('gradientUnits', 'userSpaceOnUse')
-        .attr('x1', (link.source as SNode).x1 ?? 0)
-        .attr('x2', (link.target as SNode).x0 ?? 0);
-
-      const srcColor = (link.source as SNode).color || '#6366f1';
-      const tgtColor = link.color || (link.target as SNode).color || '#475569';
-
+        .attr('x1', src.x1 ?? 0)
+        .attr('x2', tgt.x0 ?? 0);
+      const srcColor = src.color || '#6366f1';
+      const tgtColor = link.color || tgt.color || '#475569';
       grad.append('stop').attr('offset', '0%').attr('stop-color', srcColor).attr('stop-opacity', 0.8);
       grad.append('stop').attr('offset', '100%').attr('stop-color', tgtColor).attr('stop-opacity', 0.8);
     });
@@ -84,30 +76,24 @@ export default function SankeyDiagram({ data, width = 800, height = 400 }: Props
     // Links
     g.append('g')
       .attr('fill', 'none')
-      .selectAll('path')
-      .data(graph.links)
+      .selectAll<SVGPathElement, SLink>('path')
+      .data(graph.links as SLink[])
       .join('path')
-      .attr('d', sankeyLinkHorizontal())
-      .attr('stroke', (_d: SLink, i: number) => `url(#link-grad-${i})`)
+      .attr('d', sankeyLinkHorizontal() as (d: SLink) => string)
+      .attr('stroke', (_d: SLink, i: number) => `url(#lg-${i})`)
       .attr('stroke-width', (d: SLink) => Math.max(1, d.width ?? 1))
       .attr('stroke-opacity', 0.5)
-      .on('mouseover', (_event: MouseEvent, _d: SLink) => {
-        // hover handled via CSS opacity
-      })
-      .on('mouseout', (_event: MouseEvent, _d: SLink) => {
-        // hover handled via CSS opacity
-      })
       .append('title')
       .text((d: SLink) => {
-        const src = (d.source as SNode).label;
-        const tgt = (d.target as SNode).label;
+        const src = (d.source as SNode).label ?? '';
+        const tgt = (d.target as SNode).label ?? '';
         return `${src} → ${tgt}\n$${d.value.toLocaleString()}`;
       });
 
     // Nodes
     const node = g.append('g')
-      .selectAll('g')
-      .data(graph.nodes)
+      .selectAll<SVGGElement, SNode>('g')
+      .data(graph.nodes as SNode[])
       .join('g');
 
     node.append('rect')
@@ -120,50 +106,44 @@ export default function SankeyDiagram({ data, width = 800, height = 400 }: Props
       .append('title')
       .text((d: SNode) => `${d.label}\n$${(d.value ?? 0).toLocaleString()}`);
 
-    // Labels
+    const lx = (d: SNode) => (d.x0 ?? 0) < width / 2 ? (d.x1 ?? 0) + 8 : (d.x0 ?? 0) - 8;
+    const la = (d: SNode) => (d.x0 ?? 0) < width / 2 ? 'start' : 'end';
+    const ly = (d: SNode) => ((d.y1 ?? 0) + (d.y0 ?? 0)) / 2;
+
     node.append('text')
-      .attr('x', (d: SNode) => ((d.x0 ?? 0) < width / 2 ? (d.x1 ?? 0) + 8 : (d.x0 ?? 0) - 8))
-      .attr('y', (d: SNode) => ((d.y1 ?? 0) + (d.y0 ?? 0)) / 2)
+      .attr('x', (d: SNode) => lx(d))
+      .attr('y', (d: SNode) => ly(d))
       .attr('dy', '0.35em')
-      .attr('text-anchor', (d: SNode) => (d.x0 ?? 0) < width / 2 ? 'start' : 'end')
+      .attr('text-anchor', (d: SNode) => la(d))
       .attr('font-size', 12)
       .attr('font-family', 'Inter, system-ui, sans-serif')
       .attr('fill', '#e2e8f0')
-      .text((d: SNode) => `${d.label}`)
-      .clone(true)
-      .lower()
+      .text((d: SNode) => d.label ?? '')
+      .clone(true).lower()
       .attr('stroke-width', 3)
       .attr('stroke', '#0f1117');
 
-    // Value labels
     node.append('text')
-      .attr('x', (d: SNode) => ((d.x0 ?? 0) < width / 2 ? (d.x1 ?? 0) + 8 : (d.x0 ?? 0) - 8))
-      .attr('y', (d: SNode) => ((d.y1 ?? 0) + (d.y0 ?? 0)) / 2 + 14)
+      .attr('x', (d: SNode) => lx(d))
+      .attr('y', (d: SNode) => ly(d) + 14)
       .attr('dy', '0.35em')
-      .attr('text-anchor', (d: SNode) => (d.x0 ?? 0) < width / 2 ? 'start' : 'end')
+      .attr('text-anchor', (d: SNode) => la(d))
       .attr('font-size', 10)
       .attr('font-family', 'Inter, system-ui, sans-serif')
       .attr('fill', '#8892b0')
       .text((d: SNode) => `$${(d.value ?? 0).toLocaleString()}`);
 
-  }, [graph, width, height]);
+  }, [data, width, height, hasData]);
 
-  if (!graph) {
+  if (!hasData) {
     return (
-      <div className="flex items-center justify-center h-full">
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
         <p style={{ color: '#8892b0', fontSize: 14 }}>
-          Add income and spending data to see the Sankey diagram
+          Enter income to see your budget flow
         </p>
       </div>
     );
   }
 
-  return (
-    <svg
-      ref={svgRef}
-      width={width}
-      height={height}
-      style={{ overflow: 'visible' }}
-    />
-  );
+  return <svg ref={svgRef} width={width} height={height} style={{ overflow: 'visible' }} />;
 }
