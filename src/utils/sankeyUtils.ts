@@ -1,9 +1,29 @@
-import type { BudgetCategory, MonthData, SavingsBucket, SankeyData } from '../types';
+import type { SankeyData } from '../types';
+
+export interface CategoryLike {
+  id: string;
+  name: string;
+  target_amount: number;
+  color: string;
+}
+
+export interface BucketLike {
+  id: string;
+  name: string;
+  target_amount: number;
+  color: string;
+}
+
+export interface MonthLike {
+  income: number;
+  spending: Record<string, number>;
+  savingsContributions: Record<string, number>;
+}
 
 export function buildSankeyData(
-  month: MonthData,
-  categories: BudgetCategory[],
-  savingsBuckets: SavingsBucket[],
+  month: MonthLike,
+  categories: CategoryLike[],
+  savingsBuckets: BucketLike[],
   isHistorical: boolean
 ): SankeyData {
   const nodes: SankeyData['nodes'] = [];
@@ -12,17 +32,15 @@ export function buildSankeyData(
   const income = month.income || 0;
   if (income === 0) return { nodes: [], links: [] };
 
-  // Source: Income node
   nodes.push({ id: 'income', label: 'Income', color: '#10b981' });
 
-  // Spending categories — always use actual values only to preserve flow conservation
   let totalAllocated = 0;
 
   for (const cat of categories) {
     const actual = month.spending[cat.id] || 0;
     if (actual <= 0) continue;
 
-    const isOver = isHistorical && cat.targetAmount > 0 && actual > cat.targetAmount;
+    const isOver = isHistorical && cat.target_amount > 0 && actual > cat.target_amount;
     nodes.push({ id: `cat_${cat.id}`, label: cat.name, color: cat.color });
     links.push({
       source: 'income',
@@ -34,7 +52,6 @@ export function buildSankeyData(
     totalAllocated += actual;
   }
 
-  // Savings buckets
   for (const bucket of savingsBuckets) {
     const contribution = month.savingsContributions[bucket.id] || 0;
     if (contribution <= 0) continue;
@@ -49,16 +66,10 @@ export function buildSankeyData(
     totalAllocated += contribution;
   }
 
-  // Remaining — always non-negative since we only use actuals
   const remaining = income - totalAllocated;
   if (remaining > 0) {
     nodes.push({ id: 'remaining', label: 'Remaining', color: '#475569' });
-    links.push({
-      source: 'income',
-      target: 'remaining',
-      value: remaining,
-      color: '#475569',
-    });
+    links.push({ source: 'income', target: 'remaining', value: remaining, color: '#475569' });
   }
 
   return { nodes, links };
@@ -70,10 +81,14 @@ export function calcVariance(actual: number, target: number): number {
 }
 
 export function formatVariance(pct: number): string {
-  const sign = pct >= 0 ? '+' : '';
-  return `${sign}${pct.toFixed(1)}%`;
+  return `${pct >= 0 ? '+' : ''}${pct.toFixed(1)}%`;
 }
 
 export function formatCurrency(amount: number): string {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(amount);
+}
+
+export function formatMonthLabel(monthId: string): string {
+  const [y, m] = monthId.split('-').map(Number);
+  return new Date(y, m - 1, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
 }
